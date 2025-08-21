@@ -1,0 +1,257 @@
+---
+title: "Exercise Statistics for Natural Resources"
+author: "Andrea Clemente Ureña"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+- The dataset **ChickWeight** contains *body weight measurements* of baby chicks over time.
+- It includes observations from chicks fed with **four different diets**.
+- Measurements were taken from birth to day 21, approximately **every two days**.
+- The dataset has **1785 observations** and the following key variables:
+
+  - **`weight`**: *Numeric*. The body weight of each chick in grams.
+  - **`Time`**: *Numeric*. The number of days since birth when the weight was recorded.
+  - **`Chick`**: *Factor*. A unique identifier for each chick. Chicks are grouped by diet and sorted by their final weight.
+  - **`Diet`**: *Factor*. Indicates which of the four experimental diets the chick received.
+
+- The chicks are grouped and ordered in a way that facilitates **longitudinal analysis** and **comparison between diets**.
+- This dataset is particularly useful for exploring *growth trends*, *dietary effects*, and modeling with **GLM**, **GLMM**, and **GAM** techniques.
+
+## Numerical and Graphical Summary
+```{r}
+library(dplyr)
+library(ggplot2)
+data(ChickWeight)
+```
+
+```{r}
+# structure and summary
+str(ChickWeight)
+summary(ChickWeight)
+```
+The `ChickWeight` dataset contains **578 observations** of **50 chicks**, each measured repeatedly over time.
+
+- **`weight`**: *Chick body weight in grams*, ranging from **35g to 373g**.
+- **`Time`**: *Number of days since birth*, ranging from **0 to 21 days**.
+- **`Chick`**: *Ordered factor*. A unique identifier for each chick. Measurements are grouped by chick.
+- **`Diet`**: *Factor with 4 levels*, indicating the experimental diet.
+
+Some key insights from the dataset:
+- The **average chick weight** is approximately **122g**.
+- Most chicks were measured around **every 2 days**, starting from day 0 up to day 21.
+- **Diet groups are unbalanced** — Diet 1 has more observations than the others.
+- The dataset is ideal for *longitudinal modeling*, such as GLMMs or GAMs, because each chick has multiple measurements over time.
+
+```{r}
+ChickWeight %>%
+  group_by(Diet) %>%
+  summarise(
+    Count = n(),
+    Mean_Weight = mean(weight),
+    SD_Weight = sd(weight),
+    Max_Weight = max(weight),
+    Min_Weight = min(weight)
+  )
+```
+```{r}
+ggplot(ChickWeight, aes(x = Diet, y = weight, fill = Diet)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#A8DADC", "#C1FFC1", "#FFFACD", "#FFC0CB")) +
+  labs(title = "Boxplot of Chick Weights by Diet",
+       y = "Weight (g)", x = "Diet") +
+  theme_minimal()
+
+```
+**Key Points:**
+
+- **Diet 3** resulted in the heaviest chicks on average (**142.95g**) and had the highest maximum weight (**373g**), but also showed the **largest variation** in weights.
+- **Diet 1** had the **lowest average weight** (**102.6g**) and the **highest number of observations**.
+- The **minimum weight** was similar across all diets (~35–39g), but **maximum weights varied**, suggesting a strong effect of diet on growth.
+- **Standard deviation** was highest for Diet 3, indicating that chick weights under this diet were more spread out.
+
+```{r}
+ggplot(ChickWeight, aes(x = weight)) +
+  geom_histogram(bins = 30, fill = "lightgreen", color = "white") +
+  labs(title = "Distribution of Chick Weights",
+       x = "Weight (g)", y = "Count") +
+  theme_minimal()
+
+
+```
+The histogram of chick weights shows a **right-skewed distribution**:
+
+- Most chicks have lower weights, especially in the early days.
+- A few chicks reached much higher weights, creating a "long tail" on the right.
+- This suggests the distribution is **not perfectly normal**, which may affect linear modeling assumptions.
+
+```{r}
+ChickWeight %>%
+  group_by(Diet) %>%
+  summarise(correlation = cor(Time, weight))
+
+```
+**Key Points:**
+
+- All diets show a **strong positive correlation** between age and weight, as expected — chicks grow over time.
+- Diets **3 and 4** show the **strongest correlation**, suggesting a more consistent growth pattern across time for those diets.
+- Diets **1 and 2** show slightly **weaker correlation**, possibly due to greater variability or outliers in chick growth.
+- This supports the idea that *diet affects not just weight, but how predictably chicks grow over time*.
+
+These correlations justify including **Time** as a predictor in subsequent models, and considering **Diet** as a potential modifier of the growth trajectory.
+
+```{r}
+ggplot(ChickWeight, aes(x = Time, y = weight, color = Diet)) +
+  stat_summary(fun = mean, geom = "line", size = 1.2) +
+  labs(title = "Average Weight Over Time by Diet",
+       x = "Time (days)", y = "Average Weight (g)") +
+  theme_minimal() +
+  scale_color_manual(values = c("#A8DADC", "#C1FFC1", "#FFFACD", "#FFC0CB"))
+
+```
+**Key Points**
+
+- **This line plot shows the average weight of chicks over time for each diet group.**
+
+- **Diet 3** results in the **fastest and highest weight gain**, indicating a strong effect of this diet on growth.
+
+- **Diet 4** also shows **steady improvement**, placing it second in growth performance.
+
+- **Diet 2** and **Diet 1** show more **modest, linear growth patterns**, with **Diet 1** being the least effective in promoting weight gain.
+
+- The **divergence in the lines over time** suggests increasing differences in weight outcomes between diets as chicks age.
+
+- This plot helps visually confirm that **diet significantly impacts chick growth**, and motivates including **interaction terms or non-linear effects** in the modeling stage.
+
+## Build a linear model using GLM using step and add function for variable selection
+
+```{r}
+# Null modelt
+glm_null <- glm(weight ~ 1, data = ChickWeight)
+
+# Full model
+glm_full <- glm(weight ~ Time * Diet, data = ChickWeight)
+
+# Stepwise model selection
+glm_step <- step(glm_null, 
+                 scope = list(lower = glm_null, upper = glm_full), 
+                 direction = "both")
+summary(glm_step)
+```
+```{r}
+newdata <- expand.grid(
+  Time = seq(min(ChickWeight$Time), max(ChickWeight$Time), length.out = 100),
+  Diet = levels(ChickWeight$Diet)
+)
+
+newdata$pred <- predict(glm_step, newdata = newdata)
+
+# Plot predicted values
+library(ggplot2)
+ggplot(newdata, aes(x = Time, y = pred, color = Diet)) +
+  geom_line(size = 1.2) +
+  labs(title = "Predicted Weight over Time by Diet (GLM Stepwise)",
+       x = "Time (days)", y = "Predicted Weight (g)") +
+  theme_minimal()
+
+# Residual plot
+plot(glm_step$fitted.values, resid(glm_step),
+     xlab = "Fitted values", ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red")
+
+```
+The final model is: *weight ~ Time + Diet + Time:Diet*
+
+**Model fit:**
+
+- The **AIC** decreased from **6572** (null model) to **5729**, indicating a substantially better fit as variables were added.
+- The residual deviance dropped from **2,914,556** to **661,532**, showing the model explains a large portion of the variation in weight.
+
+**Main effects:**
+
+- **Time** has a strong positive effect on weight (**p < 0.001**), indicating that chicks gain weight as time increases.
+- The effect of **Diet** alone is less clear: none of the individual Diet coefficients are statistically significant at the 5% level, though Diet 3 shows a marginal effect (**p = 0.081**).
+
+**Interactions (Time:Diet):**
+
+- There are significant interactions between **Time** and all diets except Diet 1 (the reference level).
+- This suggests that the **rate of weight gain over time depends on the Diet**.
+- In particular:
+  - **Diet 3** shows the strongest interaction (**p < 0.001**), meaning chicks on Diet 3 gain weight faster over time.
+  - **Diet 4** and **Diet 2** also show significant time interactions (**p < 0.01**), with moderate increases in growth rate.
+
+**Residual analysis:**
+
+- The residuals are centered around zero, as expected.
+- However, there is a visible pattern: residuals are tightly clustered at lower fitted values and become more spread out at higher fitted values.
+- This suggests **increasing variance**, a common issue in growth models, which could indicate **heteroscedasticity**.
+- While the model still captures the main trends well, this pattern may violate the assumption of constant variance and could be explored further (e.g., with weighted regression or transformation).
+
+## Build a GLMM model
+```{r}
+library(lme4)
+glmm_model <- lmer(weight ~ Time * Diet + (1 | Chick), data = ChickWeight)
+glmm_model
+```
+```{r}
+ggplot() +
+  geom_line(data = ChickWeight, aes(x = Time, y = weight, group = Chick), alpha = 0.2, color = "black") +
+  geom_line(data = newdata, aes(x = Time, y = pred, color = Diet), size = 1.5) +
+  labs(title = "Individual Growth Trajectories and GLMM Predicted Means",
+       x = "Time (days)", y = "Weight (g)") +
+  theme_minimal()
+
+```
+**The GLMM results show** that including a random intercept for each chick improves the model by accounting for repeated measures on the same individuals. The fixed effects (Time and Diet) remain significant, and the diet-time interactions persist.
+
+**The plot for the GLMM displays** a large number of semi-transparent lines representing individual chick growth trajectories. Overlaid on these are smoother lines for each diet, representing the average trend.
+
+- The **individual lines** demonstrate substantial variability among chicks.
+- The **average lines** show that Diet 3 again leads to the highest growth, while Diet 1 remains the slowest.
+- This model captures both population-level trends and individual variability.
+
+## Build a GAM model.
+```{r}
+library(mgcv)
+gam_model <- gam(weight ~ s(Time, by=Diet) + Diet, data = ChickWeight)
+summary(gam_model)
+gam_model
+```
+```{r}
+newdata <- expand.grid(
+  Time = seq(min(ChickWeight$Time), max(ChickWeight$Time), length.out = 100),
+  Diet = levels(ChickWeight$Diet))
+pred <- predict(gam_model, newdata = newdata, se.fit = TRUE)
+newdata$fit <- pred$fit
+newdata$se <- pred$se.fit
+ggplot(newdata, aes(x = Time, y = fit, color = Diet, fill = Diet)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = fit - 2*se, ymax = fit + 2*se), alpha = 0.2, color = NA) +
+  labs(title = "GAM Prediction of Weight by Time and Diet",
+       x = "Time (days)", y = "Estimated weight") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom")
+
+```
+**The GAM analysis reveals** that the relationship between `Time` and `weight` is non-linear and varies by diet. Each diet is modeled with a separate smoothing function, allowing for more flexibility in capturing growth patterns.
+
+**The GAM plot illustrates** smooth curves (not straight lines) for each diet:
+
+- The **curves show** how weight increases over time, sometimes accelerating or leveling off.
+- **Diet 3** again shows the most pronounced and consistent growth.
+- **Diet 1** has a slower and more irregular trajectory.
+- The inclusion of confidence bands helps visualize the uncertainty of the fit.
+
+This model is particularly effective in uncovering complex, non-linear growth dynamics that simpler models may miss.
+
+
